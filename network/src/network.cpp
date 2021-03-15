@@ -1,7 +1,9 @@
 #include <arpa/inet.h>
+#include <asm-generic/socket.h>
 #include <iostream>
 #include <netinet/in.h>
 #include <network.hpp>
+#include <stdexcept>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -79,52 +81,39 @@ dns_question get_dns_question(const unsigned char *packet) {
 }
 
 // class functions
-Network::Network(int port) : port(port) {}
+DNS::DNS(int port) : port(port) {}
 
-Network::~Network() {
+DNS::~DNS() {
   // deallocate all the resources
-  if (sockfd > -1)
-    close(sockfd);
+  if (local_dns_sockfd > -1)
+    close(local_dns_sockfd);
 }
 
 // Public functions
 
-int Network::init(const char *ip) {
+int DNS::init(const char *ip) {
   // function creates socket and binds to port
   // returns 0 upon successful creation of socket
   // else returns -1
-  sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (sockfd == -1) {
-    log("Failed to create socket", LOG_ERROR);
-    return -1;
-  }
-
-  int flag = 0;
-  if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &flag,
-                 sizeof(flag)) == -1) {
-    log("Failed to set socket options", LOG_ERROR);
-    return -1;
-  }
 
   // initalize structure for this local dns
-  address.sin_port = htons(port);
-  address.sin_family = AF_INET;
-  inet_aton(ip, &address.sin_addr);
+  local_dns_address.sin_port = htons(port);
+  local_dns_address.sin_family = AF_INET;
+  inet_aton(ip, &local_dns_address.sin_addr);
 
-  if (bind(sockfd, (const struct sockaddr *)&address, sizeof(address)) == -1) {
-    log("Failed to bind socket", LOG_ERROR);
+  if (create_socket(local_dns_sockfd, &local_dns_address) == -1) {
     return -1;
   }
 
   // initalize structure for public dns
-  public_dns.sin_port = htons(53);
-  public_dns.sin_family = AF_INET;
-  inet_aton(DEFAULT_PUBLIC_DNS, &public_dns.sin_addr);
+  public_dns_address.sin_port = htons(53);
+  public_dns_address.sin_family = AF_INET;
+  inet_aton(DEFAULT_PUBLIC_DNS, &public_dns_address.sin_addr);
 
   return 0;
 }
 
-int Network::serve(unsigned int backlog) {
+int DNS::serve() {
   // function starts serving dns queries.
 
   for (int i = 0; i < 1; i++) {
@@ -132,8 +121,9 @@ int Network::serve(unsigned int backlog) {
     sockaddr_in client;
 
     int len = sizeof(client);
-    int msg_len = recvfrom(sockfd, (char *)buffer.c_str(), sizeof(buffer), 0,
-                           (struct sockaddr *)&client, (socklen_t *)&len);
+    int msg_len =
+        recvfrom(local_dns_sockfd, (char *)buffer.c_str(), sizeof(buffer), 0,
+                 (struct sockaddr *)&client, (socklen_t *)&len);
 
     if (msg_len == -1) {
       log("Failed to recive message", LOG_ERROR);
@@ -151,7 +141,7 @@ int Network::serve(unsigned int backlog) {
   return 0;
 }
 
-int Network::test() {
+int DNS::test() {
   // unsigned char packet[] = {
   //     0x68, 0xac, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   //     0x04, 0x70, 0x69, 0x6e, 0x67, 0x09, 0x61, 0x72, 0x63, 0x68, 0x6c, 0x69,
@@ -167,20 +157,43 @@ int Network::test() {
 }
 
 // private functions
-//
-std::basic_string<unsigned char> Network::query(const char *packet) {
+
+int DNS::create_socket(int &sockfd, const struct sockaddr_in *address) {
+  sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (sockfd == -1) {
+    log("Failed to create socket", LOG_ERROR);
+    return -1;
+  }
+  int flag = 0;
+
+  if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &flag,
+                 sizeof(flag)) == -1) {
+    log("Faiiled to set socket options", LOG_ERROR);
+    return -1;
+  }
+
+  if (bind(sockfd, (const struct sockaddr *)address, sizeof(sockaddr_in)) ==
+      -1) {
+    log("Failed to bind the socket", LOG_ERROR);
+    return -1;
+  }
+  return 0;
+}
+
+std::basic_string<unsigned char> DNS::query(const char *packet) {
   std::basic_string<unsigned char> buffer = {
       0x68, 0xac, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
       0x04, 0x70, 0x69, 0x6e, 0x67, 0x09, 0x61, 0x72, 0x63, 0x68, 0x6c, 0x69,
       0x6e, 0x75, 0x78, 0x03, 0x6f, 0x72, 0x67, 0x00, 0x00, 0x1c, 0x00, 0x01,
   };
   int msg_len;
-  sendto(sockfd, buffer.c_str(), buffer.length(), 0,
-         (const struct sockaddr *)&public_dns, sizeof(public_dns));
+  sendto(local_dns_sockfd, buffer.c_str(), buffer.length(), 0,
+         (const struct sockaddr *)&public_dns_address,
+         sizeof(public_dns_address));
 
   struct sockaddr_in client;
   int len = sizeof(client);
-  msg_len = recvfrom(sockfd, (char *)buffer.c_str(), sizeof(buffer), 0,
-                     (struct sockaddr *)&client, (socklen_t *)&len);
+  msg_len = recvfrom(local_dns_sockfd, (char *)buffer.c_str(), sizeof(buffer),
+                     0, (struct sockaddr *)&client, (socklen_t *)&len);
   return buffer;
 }

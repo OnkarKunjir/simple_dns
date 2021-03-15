@@ -4,10 +4,9 @@
 #include <netinet/in.h>
 #include <string>
 
-#define DEFAULT_BACKLOG 5
-#define BUFFER_SIZE 1024             // buffer size in bytes.
 #define DEFAULT_PUBLIC_DNS "8.8.8.8" // dns to fetch actual results from.
 #define DEFAULT_PUBLIC_DNS_PORT 8081 // port number for public dns
+#define BUFFER_SIZE 1024             // buffer size in bytes.
 
 struct dns_header {
   unsigned short int id;      // Identification number
@@ -26,23 +25,24 @@ struct dns_question {
   unsigned int size;       // size in bytes of question inside packet
 };
 
-class Network {
+class DNS {
 public:
   unsigned int port;
-  Network(int port);
+  DNS(int port);
   int init(const char *ip);
-  int serve(unsigned int backlog = DEFAULT_BACKLOG);
+  int serve();
 
   int test();
-  ~Network();
+  ~DNS();
 
   // static functions
 
 private:
-  int sockfd;
-  sockaddr_in address;
-  sockaddr_in public_dns;
+  int local_dns_sockfd, public_dns_sockfd;
+  sockaddr_in local_dns_address;
+  sockaddr_in public_dns_address;
 
+  int create_socket(int &sockfd, const struct sockaddr_in *address);
   std::basic_string<unsigned char>
   query(const char *packet); // function queryies dns request to DEFAULT_DNS
 };
