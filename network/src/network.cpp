@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <asm-generic/socket.h>
 #include <iostream>
+#include <iterator>
 #include <netinet/in.h>
 #include <network.hpp>
 #include <string>
@@ -13,6 +14,7 @@
 #define LOG_DEBUG 0
 #define LOG_ERROR 1
 
+// utils function
 void log(const char *msg, int log_level = 0) {
   switch (log_level) {
   case LOG_DEBUG:
@@ -25,6 +27,60 @@ void log(const char *msg, int log_level = 0) {
   std::cout << msg << std::endl;
 }
 
+void print_sockaddr_in(const struct sockaddr_in *address) {
+  // fucntion to print sockaddr_in
+  std::cout << inet_ntoa(address->sin_addr) << ":" << ntohs(address->sin_port)
+            << std::endl;
+}
+
+void print_dns_header(const struct dns_header *header) {
+  printf("ID:\t%04x\n", ntohs(header->id));
+  printf("Flags:\t%04x\n", ntohs(header->flags));
+  std::cout << "qdcount:\t" << ntohs(header->qdcount) << std::endl;
+  std::cout << "ancount:\t" << ntohs(header->ancount) << std::endl;
+  std::cout << "nscount:\t" << ntohs(header->nscount) << std::endl;
+  std::cout << "arcount:\t" << ntohs(header->arcount) << std::endl;
+}
+
+void print_dns_question(const struct dns_question *question) {
+  std::cout << "Name:\t" << question->name << std::endl;
+  printf("Type:\t%04x\n", question->type);
+  printf("Class:\t%04x\n", question->cls);
+}
+
+dns_question get_dns_question(const unsigned char *packet) {
+  // function extracts question form dns packet
+  dns_question question;
+  std::vector<unsigned char> labels;
+
+  // extract all labels
+  int offset = 0;
+  unsigned char label_length = packet[offset++];
+
+  while (label_length != 0) {
+    for (int i = offset; i < offset + label_length; i++) {
+      labels.push_back(packet[i]);
+    }
+    offset += label_length;
+    label_length = packet[offset];
+    offset++;
+    if (label_length)
+      labels.push_back('.');
+  }
+
+  question.name = std::string(labels.begin(), labels.end());
+
+  question.type = packet[offset++];
+  question.type = (question.type << 8) | packet[offset++];
+
+  question.cls = packet[offset++];
+  question.cls = (question.cls << 8) | packet[offset++];
+
+  question.size = offset;
+  return question;
+}
+
+// class functions
 Network::Network(int port) : port(port) {}
 
 int Network::init(const char *ip) {
@@ -56,42 +112,30 @@ int Network::init(const char *ip) {
 }
 
 int Network::serve(unsigned int backlog) {
-  std::string buffer(BUFFER_SIZE, 0);
-  sockaddr_in client;
-  int len = sizeof(client);
-  recvfrom(sockfd, (char *)buffer.c_str(), sizeof(buffer), 0,
-           (struct sockaddr *)&client, (socklen_t *)&len);
+  // function starts serving dns queries.
 
-  return 0;
-}
+  for (int i = 0; i < 1; i++) {
+    std::string buffer(BUFFER_SIZE, 0);
+    sockaddr_in client;
 
-dns_question get_question(const unsigned char *packet) {
-  dns_question question;
-  std::vector<unsigned char> labels;
+    int len = sizeof(client);
+    int msg_len = recvfrom(sockfd, (char *)buffer.c_str(), sizeof(buffer), 0,
+                           (struct sockaddr *)&client, (socklen_t *)&len);
 
-  // extract all labels
-  int offset = 0;
-  unsigned char label_length = packet[offset++];
-
-  while (label_length != 0) {
-    for (int i = offset; i < offset + label_length; i++) {
-      labels.push_back(packet[i]);
+    if (msg_len == -1) {
+      log("Failed to recive message", LOG_ERROR);
+      return -1;
     }
-    offset += label_length;
-    label_length = packet[offset];
-    offset++;
-    if (label_length)
-      labels.push_back('.');
+
+    const dns_header *header = (const dns_header *)buffer.c_str();
+    print_dns_header(header);
+
+    dns_question question = get_dns_question(
+        (const unsigned char *)buffer.c_str() + sizeof(dns_header));
+
+    print_dns_question(&question);
   }
-
-  question.name = std::string(labels.begin(), labels.end());
-
-  question.type = packet[offset++];
-  question.type = (question.type << 8) | packet[offset++];
-
-  question.cls = packet[offset++];
-  question.cls = (question.cls << 8) | packet[offset++];
-  return question;
+  return 0;
 }
 
 int Network::test() {
@@ -102,7 +146,9 @@ int Network::test() {
   };
 
   struct dns_header *header = (struct dns_header *)packet;
-  get_question(packet + sizeof(dns_header));
+  print_dns_header(header);
+  dns_question question = get_dns_question(packet + sizeof(dns_header));
+  print_dns_question(&question);
   return 0;
 }
 
