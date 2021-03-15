@@ -8,8 +8,9 @@ int main() {
   if (network.init("0.0.0.0") == -1) {
     return -1;
   }
-  network.serve();
+  // network.serve();
   // network.test();
 
+  network.test();
   return 0;
 }

@@ -1,7 +1,5 @@
 #include <arpa/inet.h>
-#include <asm-generic/socket.h>
 #include <iostream>
-#include <iterator>
 #include <netinet/in.h>
 #include <network.hpp>
 #include <string>
@@ -83,6 +81,14 @@ dns_question get_dns_question(const unsigned char *packet) {
 // class functions
 Network::Network(int port) : port(port) {}
 
+Network::~Network() {
+  // deallocate all the resources
+  if (sockfd > -1)
+    close(sockfd);
+}
+
+// Public functions
+
 int Network::init(const char *ip) {
   // function creates socket and binds to port
   // returns 0 upon successful creation of socket
@@ -100,6 +106,7 @@ int Network::init(const char *ip) {
     return -1;
   }
 
+  // initalize structure for this local dns
   address.sin_port = htons(port);
   address.sin_family = AF_INET;
   inet_aton(ip, &address.sin_addr);
@@ -108,6 +115,12 @@ int Network::init(const char *ip) {
     log("Failed to bind socket", LOG_ERROR);
     return -1;
   }
+
+  // initalize structure for public dns
+  public_dns.sin_port = htons(53);
+  public_dns.sin_family = AF_INET;
+  inet_aton(DEFAULT_PUBLIC_DNS, &public_dns.sin_addr);
+
   return 0;
 }
 
@@ -115,7 +128,7 @@ int Network::serve(unsigned int backlog) {
   // function starts serving dns queries.
 
   for (int i = 0; i < 1; i++) {
-    std::string buffer(BUFFER_SIZE, 0);
+    std::basic_string<unsigned int> buffer(BUFFER_SIZE, 0);
     sockaddr_in client;
 
     int len = sizeof(client);
@@ -139,21 +152,35 @@ int Network::serve(unsigned int backlog) {
 }
 
 int Network::test() {
-  unsigned char packet[] = {
+  // unsigned char packet[] = {
+  //     0x68, 0xac, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  //     0x04, 0x70, 0x69, 0x6e, 0x67, 0x09, 0x61, 0x72, 0x63, 0x68, 0x6c, 0x69,
+  //     0x6e, 0x75, 0x78, 0x03, 0x6f, 0x72, 0x67, 0x00, 0x00, 0x1c, 0x00, 0x01,
+  // };
+
+  // struct dns_header *header = (struct dns_header *)packet;
+  // print_dns_header(header);
+  // dns_question question = get_dns_question(packet + sizeof(dns_header));
+  // print_dns_question(&question);
+  query(nullptr);
+  return 0;
+}
+
+// private functions
+//
+std::basic_string<unsigned char> Network::query(const char *packet) {
+  std::basic_string<unsigned char> buffer = {
       0x68, 0xac, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
       0x04, 0x70, 0x69, 0x6e, 0x67, 0x09, 0x61, 0x72, 0x63, 0x68, 0x6c, 0x69,
       0x6e, 0x75, 0x78, 0x03, 0x6f, 0x72, 0x67, 0x00, 0x00, 0x1c, 0x00, 0x01,
   };
+  int msg_len;
+  sendto(sockfd, buffer.c_str(), buffer.length(), 0,
+         (const struct sockaddr *)&public_dns, sizeof(public_dns));
 
-  struct dns_header *header = (struct dns_header *)packet;
-  print_dns_header(header);
-  dns_question question = get_dns_question(packet + sizeof(dns_header));
-  print_dns_question(&question);
-  return 0;
-}
-
-Network::~Network() {
-  // deallocate all the resources
-  if (sockfd > -1)
-    close(sockfd);
+  struct sockaddr_in client;
+  int len = sizeof(client);
+  msg_len = recvfrom(sockfd, (char *)buffer.c_str(), sizeof(buffer), 0,
+                     (struct sockaddr *)&client, (socklen_t *)&len);
+  return buffer;
 }

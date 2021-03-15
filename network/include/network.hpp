@@ -5,7 +5,9 @@
 #include <string>
 
 #define DEFAULT_BACKLOG 5
-#define BUFFER_SIZE 1024 // buffer size in bytes.
+#define BUFFER_SIZE 1024             // buffer size in bytes.
+#define DEFAULT_PUBLIC_DNS "8.8.8.8" // dns to fetch actual results from.
+#define DEFAULT_PUBLIC_DNS_PORT 8081 // port number for public dns
 
 struct dns_header {
   unsigned short int id;      // Identification number
@@ -39,4 +41,8 @@ public:
 private:
   int sockfd;
   sockaddr_in address;
+  sockaddr_in public_dns;
+
+  std::basic_string<unsigned char>
+  query(const char *packet); // function queryies dns request to DEFAULT_DNS
 };
