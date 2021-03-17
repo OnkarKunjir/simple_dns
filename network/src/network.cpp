@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <asm-generic/socket.h>
+#include <functional>
 #include <iostream>
 #include <netinet/in.h>
 #include <network.hpp>
@@ -21,7 +22,7 @@ void log(const char *msg, int log_level = 0) {
     std::cout << "[DEBUG]\t";
     break;
   case LOG_ERROR:
-    std::cout << "[ERROR]\n";
+    std::cout << "[ERROR]\t";
     break;
   }
   std::cout << msg << std::endl;
@@ -80,6 +81,48 @@ dns_question get_dns_question(const unsigned char *packet) {
   return question;
 }
 
+dns_answer generate_default_dns_answer(const struct dns_question *question) {
+  dns_answer answer;
+  answer.name = question->name;
+  answer.type = question->type;
+  answer.cls = question->cls;
+  answer.ttl = 10;
+
+  if (answer.type == 1) {
+    // ipv4
+    answer.rdlength = 4;
+    answer.rdata = {0x00, 0x00, 0x00, 0x00};
+  }
+  return answer;
+}
+
+std::basic_string<unsigned char>
+dns_answer_to_bytes(const struct dns_answer *answer) {
+  std::basic_string<unsigned char> packet;
+  std::basic_string<unsigned char> name(answer->name.length() + 1, 0);
+
+  int len_index = 0, len = 0, index = 1;
+  for (char i : answer->name) {
+    if (i == '.') {
+      name[len_index] = len;
+      len = 0;
+      len_index = index;
+    } else {
+      name[index] = i;
+      len++;
+    }
+    index++;
+  }
+  name[len_index] = len;
+
+  packet = name;
+  for (char i : name) {
+    std::cout << i;
+  }
+  std::cout << std::endl;
+  return packet;
+}
+
 // class functions
 DNS::DNS(int port) : port(port) {}
 
@@ -123,29 +166,47 @@ int DNS::init(const char *ip) {
   return 0;
 }
 
-int DNS::serve() {
+int DNS::serve(std::function<bool(std::string &)> filter) {
   // function starts serving dns queries.
 
   while (true) {
     std::basic_string<unsigned char> buffer(BUFFER_SIZE, 0);
     sockaddr_in client;
-
     int len = sizeof(client);
+
+    // recv packet
     int msg_len =
         recvfrom(local_dns_sockfd, (char *)buffer.c_str(), BUFFER_SIZE, 0,
                  (struct sockaddr *)&client, (socklen_t *)&len);
 
-    if (msg_len == -1) {
-      log("Failed to recive message", LOG_ERROR);
-      return -1;
+    // check packet for blocked ip addresses
+    bool send_default = false; // send default response
+    const struct dns_header *header = (const struct dns_header *)buffer.c_str();
+    if (ntohs(header->qdcount) == 1) {
+      // TODO: add support for packets with multiple questions.
+      struct dns_question question = get_dns_question(
+          (const unsigned char *)buffer.c_str() + sizeof(dns_header));
+      if (filter(question.name)) {
+        // found domain in blacklist
+        send_default = true;
+      }
     }
 
-    std::basic_string<unsigned char> response =
-        query((const char *)buffer.c_str(), msg_len);
+    // send response
+    std::basic_string<unsigned char> response;
+    if (send_default) {
+      // send default response
+    } else {
+      // query the public dns server.
+      response = query((const char *)buffer.c_str(), msg_len);
+    }
 
     sendto(local_dns_sockfd, (const char *)response.c_str(), response.length(),
            0, (const struct sockaddr *)&client, sizeof(client));
+
+    break;
   }
+
   return 0;
 }
 
@@ -156,26 +217,33 @@ int DNS::test() {
       0x6e, 0x75, 0x78, 0x03, 0x6f, 0x72, 0x67, 0x00, 0x00, 0x1c, 0x00, 0x01,
   };
 
-  // unsigned char packet[] = {
-  //     0x2e, 0xbc, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  //     0x11, 0x63, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x76, 0x69, 0x74,
-  //     0x79, 0x63, 0x68, 0x65, 0x63, 0x6b, 0x07, 0x67, 0x73, 0x74, 0x61, 0x74,
-  //     0x69, 0x63, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x01, 0x00, 0x01,
-  // };
-
   struct dns_header *header = (struct dns_header *)packet;
   print_dns_header(header);
   dns_question question = get_dns_question(packet + sizeof(dns_header));
   print_dns_question(&question);
 
-  std::basic_string<unsigned char> response =
-      query((const char *)packet, sizeof(packet));
+  struct dns_answer answer = generate_default_dns_answer(&question);
+  std::basic_string<unsigned char> anspac = dns_answer_to_bytes(&answer);
 
-  std::cout << "\nRESPONSE\n";
-  header = (struct dns_header *)response.c_str();
-  print_dns_header(header);
-  question = get_dns_question(response.c_str() + sizeof(dns_header));
-  print_dns_question(&question);
+  std::cout << anspac.length() << std::endl;
+
+  for (int i = sizeof(dns_header); i < sizeof(packet); i++) {
+    printf("%02x ", packet[i]);
+  }
+  printf("\n");
+
+  for (auto i : anspac) {
+    printf("%02x ", i);
+  }
+  printf("\n");
+  // std::basic_string<unsigned char> response =
+  //     query((const char *)packet, sizeof(packet));
+
+  // std::cout << "\nRESPONSE\n";
+  // header = (struct dns_header *)response.c_str();
+  // print_dns_header(header);
+  // question = get_dns_question(response.c_str() + sizeof(dns_header));
+  // print_dns_question(&question);
 
   return 0;
 }

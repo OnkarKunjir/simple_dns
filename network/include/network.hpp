@@ -1,6 +1,7 @@
 #pragma once
 
 #include <arpa/inet.h>
+#include <functional>
 #include <netinet/in.h>
 #include <string>
 
@@ -25,12 +26,22 @@ struct dns_question {
   unsigned int size;       // size in bytes of question inside packet
 };
 
+struct dns_answer {
+  std::string name;                       // domain name of the to be quried
+  unsigned short int type;                // type
+  unsigned short int cls;                 // class
+  unsigned short int ttl;                 // time to live
+  unsigned short int rdlength;            // length of rdata
+  std::basic_string<unsigned char> rdata; // record data
+  unsigned int size; // size in bytes of question inside packet
+};
+
 class DNS {
 public:
   unsigned int port;
   DNS(int port);
   int init(const char *ip);
-  int serve();
+  int serve(std::function<bool(std::string &)> filter);
 
   int test();
   ~DNS();
