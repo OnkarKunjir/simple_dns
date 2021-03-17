@@ -41,7 +41,7 @@ public:
   unsigned int port;
   DNS(int port);
   int init(const char *ip);
-  int serve(std::function<bool(std::string &)> filter);
+  int serve(std::function<bool(const char *)> filter);
 
   int test();
   ~DNS();
@@ -55,7 +55,6 @@ private:
   sockaddr_in public_dns_address;    // address of public dns
 
   int create_socket(int &sockfd, const struct sockaddr_in *address);
-  std::basic_string<unsigned char>
-  query(const char *packet,
-        int size); // function queryies dns request to DEFAULT_DNS
+  int query(const unsigned char *send_buffer, int size,
+            char unsigned *recv_buffer);
 };

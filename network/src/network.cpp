@@ -96,31 +96,79 @@ dns_answer generate_default_dns_answer(const struct dns_question *question) {
   return answer;
 }
 
-std::basic_string<unsigned char>
-dns_answer_to_bytes(const struct dns_answer *answer) {
-  std::basic_string<unsigned char> packet;
-  std::basic_string<unsigned char> name(answer->name.length() + 1, 0);
+// www.google.com
+// .www.google.com
 
-  int len_index = 0, len = 0, index = 1;
-  for (char i : answer->name) {
-    if (i == '.') {
-      name[len_index] = len;
-      len = 0;
-      len_index = index;
+// 0x04, 0x70, 0x69, 0x6e, 0x67, 0x09, 0x61, 0x72, 0x63, 0x68, 0x6c, 0x69, 0x6e,
+// 0x75, 0x78, 0x03, 0x6f, 0x72, 0x67
+
+void split_domain(const char *src, unsigned char *dst, int size) {
+  int dst_index = 1, label_size = 0, label_index = 0;
+  for (int i = 1; i < size + 1; i++) {
+    if (src[i - 1] != '.') {
+      dst[i] = src[i - 1];
+      label_size++;
     } else {
-      name[index] = i;
-      len++;
+      dst[label_index] = label_size;
+      label_size = 0;
+      label_index = i;
     }
-    index++;
   }
-  name[len_index] = len;
+  dst[label_index] = label_size;
+}
 
-  packet = name;
-  for (char i : name) {
-    std::cout << i;
-  }
-  std::cout << std::endl;
-  return packet;
+int get_dns_answer_packet(const struct dns_header *header,
+                          const struct dns_question *question,
+                          unsigned char *packet) {
+
+  int size = sizeof(dns_header);
+
+  const unsigned char *request_pkt = (const unsigned char *)header;
+  // building header
+  for (int i = 0; i < size; i++)
+    packet[i] = request_pkt[i];
+  packet[2] = 0x80;
+  packet[3] = 0x03;
+  packet[7] = 0x01; // sent number of answers to 1
+
+  // build the question section
+  split_domain(question->name.c_str(), packet + size, question->name.length());
+  size += question->name.length() + 1;
+  packet[size++] = 0;
+
+  packet[size++] = (question->type >> 8);
+  packet[size++] = (question->type);
+
+  packet[size++] = (question->cls >> 8);
+  packet[size++] = (question->cls);
+
+  // building answer section.
+  // pointer to domain name
+  packet[size++] = 0xc0;
+  packet[size++] = 0x0c;
+  // type
+  // packet[size++] = (question->type >> 8);
+  // packet[size++] = (question->type);
+  packet[size++] = 0x00;
+  packet[size++] = 0x01;
+  // class
+  packet[size++] = (question->cls >> 8);
+  packet[size++] = (question->cls);
+  // ttl
+  packet[size++] = 0x00;
+  packet[size++] = 0x00;
+  packet[size++] = 0x00;
+  packet[size++] = 0xae;
+  // rdlenght
+  packet[size++] = 0x00;
+  packet[size++] = 0x04;
+  // ip address
+  packet[size++] = 0x00;
+  packet[size++] = 0x00;
+  packet[size++] = 0x00;
+  packet[size++] = 0x00;
+
+  return size;
 }
 
 // class functions
@@ -166,45 +214,47 @@ int DNS::init(const char *ip) {
   return 0;
 }
 
-int DNS::serve(std::function<bool(std::string &)> filter) {
+int DNS::serve(std::function<bool(const char *)> filter) {
   // function starts serving dns queries.
 
   while (true) {
-    std::basic_string<unsigned char> buffer(BUFFER_SIZE, 0);
+    unsigned char buffer[BUFFER_SIZE], response[BUFFER_SIZE];
     sockaddr_in client;
-    int len = sizeof(client);
+    int len = sizeof(client), msg_len = 0;
+
+    bool send_default = false; // send default response
 
     // recv packet
-    int msg_len =
-        recvfrom(local_dns_sockfd, (char *)buffer.c_str(), BUFFER_SIZE, 0,
-                 (struct sockaddr *)&client, (socklen_t *)&len);
+    msg_len = recvfrom(local_dns_sockfd, buffer, BUFFER_SIZE, 0,
+                       (struct sockaddr *)&client, (socklen_t *)&len);
 
     // check packet for blocked ip addresses
-    bool send_default = false; // send default response
-    const struct dns_header *header = (const struct dns_header *)buffer.c_str();
+
+    const struct dns_header *header = (const struct dns_header *)buffer;
+    struct dns_question question;
     if (ntohs(header->qdcount) == 1) {
       // TODO: add support for packets with multiple questions.
-      struct dns_question question = get_dns_question(
-          (const unsigned char *)buffer.c_str() + sizeof(dns_header));
-      if (filter(question.name)) {
+      question = get_dns_question(buffer + sizeof(dns_header));
+      if (filter(question.name.c_str())) {
         // found domain in blacklist
         send_default = true;
       }
     }
 
+    std::cout << question.name << std::endl;
+    // send_default = true;
     // send response
-    std::basic_string<unsigned char> response;
     if (send_default) {
       // send default response
+      msg_len = get_dns_answer_packet(header, &question, response);
+      std::cout << "Blocking\t" << question.name << std::endl;
     } else {
       // query the public dns server.
-      response = query((const char *)buffer.c_str(), msg_len);
+      msg_len = query(buffer, msg_len, response);
     }
 
-    sendto(local_dns_sockfd, (const char *)response.c_str(), response.length(),
-           0, (const struct sockaddr *)&client, sizeof(client));
-
-    break;
+    sendto(local_dns_sockfd, response, msg_len, 0,
+           (const struct sockaddr *)&client, sizeof(client));
   }
 
   return 0;
@@ -212,30 +262,25 @@ int DNS::serve(std::function<bool(std::string &)> filter) {
 
 int DNS::test() {
   unsigned char packet[] = {
-      0x68, 0xac, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x04, 0x70, 0x69, 0x6e, 0x67, 0x09, 0x61, 0x72, 0x63, 0x68, 0x6c, 0x69,
-      0x6e, 0x75, 0x78, 0x03, 0x6f, 0x72, 0x67, 0x00, 0x00, 0x1c, 0x00, 0x01,
+      0x63, 0xc4, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x07, 0x79, 0x6f, 0x75, 0x74, 0x75, 0x62, 0x65,
+      0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x01, 0x00, 0x01,
   };
 
   struct dns_header *header = (struct dns_header *)packet;
-  print_dns_header(header);
+  // print_dns_header(header);
   dns_question question = get_dns_question(packet + sizeof(dns_header));
-  print_dns_question(&question);
+  // print_dns_question(&question);
 
-  struct dns_answer answer = generate_default_dns_answer(&question);
-  std::basic_string<unsigned char> anspac = dns_answer_to_bytes(&answer);
+  // struct dns_answer answer = generate_default_dns_answer(&question);
 
-  std::cout << anspac.length() << std::endl;
+  unsigned char answer[BUFFER_SIZE];
+  // for (int i = 0; i < BUFFER_SIZE; i++)
+  //   answer[i] = 0;
 
-  for (int i = sizeof(dns_header); i < sizeof(packet); i++) {
-    printf("%02x ", packet[i]);
-  }
-  printf("\n");
+  int len = get_dns_answer_packet(header, &question, answer);
+  query(answer, len, answer);
 
-  for (auto i : anspac) {
-    printf("%02x ", i);
-  }
-  printf("\n");
   // std::basic_string<unsigned char> response =
   //     query((const char *)packet, sizeof(packet));
 
@@ -272,21 +317,21 @@ int DNS::create_socket(int &sockfd, const struct sockaddr_in *address) {
   return 0;
 }
 
-std::basic_string<unsigned char> DNS::query(const char *packet, int size) {
+int DNS::query(const unsigned char *send_buffer, int size,
+               char unsigned *recv_buffer) {
   // function queries to public dns server and returns response.
 
   // dns packet
-  std::basic_string<unsigned char> buffer(BUFFER_SIZE, 0);
   int msg_len = 0;
-  sendto(public_dns_sockfd, packet, size, 0,
+  sendto(public_dns_sockfd, send_buffer, size, 0,
          (const struct sockaddr *)&public_dns_address,
          sizeof(public_dns_address));
 
   int addr_size = sizeof(public_dns_address);
 
   msg_len =
-      recvfrom(public_dns_sockfd, (char *)buffer.c_str(), BUFFER_SIZE, 0,
+      recvfrom(public_dns_sockfd, recv_buffer, BUFFER_SIZE, 0,
                (struct sockaddr *)&public_dns_address, (socklen_t *)&addr_size);
 
-  return buffer;
+  return msg_len;
 }
