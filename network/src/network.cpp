@@ -172,7 +172,7 @@ int get_dns_answer_packet(const struct dns_header *header,
 }
 
 // class functions
-DNS::DNS(int port) : port(port) {}
+DNS::DNS(int port) : port(port) { continue_serving = true; }
 
 DNS::~DNS() {
   // deallocate all the resources
@@ -216,7 +216,6 @@ int DNS::init(const char *ip) {
 
 int DNS::serve(std::function<bool(const char *)> filter) {
   // function starts serving dns queries.
-
   while (true) {
     unsigned char buffer[BUFFER_SIZE], response[BUFFER_SIZE];
     sockaddr_in client;
@@ -227,7 +226,6 @@ int DNS::serve(std::function<bool(const char *)> filter) {
     // recv packet
     msg_len = recvfrom(local_dns_sockfd, buffer, BUFFER_SIZE, 0,
                        (struct sockaddr *)&client, (socklen_t *)&len);
-
     // check packet for blocked ip addresses
 
     const struct dns_header *header = (const struct dns_header *)buffer;
@@ -241,20 +239,23 @@ int DNS::serve(std::function<bool(const char *)> filter) {
       }
     }
 
-    std::cout << question.name << std::endl;
+    // std::cout << question.name << std::endl;
     // send_default = true;
     // send response
     if (send_default) {
       // send default response
+
       msg_len = get_dns_answer_packet(header, &question, response);
       std::cout << "Blocking\t" << question.name << std::endl;
+
     } else {
       // query the public dns server.
       msg_len = query(buffer, msg_len, response);
     }
 
-    sendto(local_dns_sockfd, response, msg_len, 0,
-           (const struct sockaddr *)&client, sizeof(client));
+    if (msg_len > -1)
+      sendto(local_dns_sockfd, response, msg_len, 0,
+             (const struct sockaddr *)&client, sizeof(client));
   }
 
   return 0;

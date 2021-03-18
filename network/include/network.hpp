@@ -50,6 +50,7 @@ public:
 
 private:
   int local_dns_sockfd, public_dns_sockfd;
+  bool continue_serving;
   sockaddr_in local_dns_in_address;  // address to serve
   sockaddr_in local_dns_out_address; // address to query to public dns
   sockaddr_in public_dns_address;    // address of public dns
