@@ -6,10 +6,12 @@
 #include <network.hpp>
 #include <stdexcept>
 #include <string>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <cstdio>
+#include <poll.h>
 #include <vector>
 
 #define LOG_DEBUG 0
@@ -206,6 +208,9 @@ int DNS::init(const char *ip) {
     return -1;
   }
 
+  public_dns_poll.fd = public_dns_sockfd;
+  public_dns_poll.events = POLLIN;
+
   // initalize structure for public dns
   public_dns_address.sin_port = htons(53);
   public_dns_address.sin_family = AF_INET;
@@ -280,7 +285,7 @@ int DNS::test() {
   //   answer[i] = 0;
 
   int len = get_dns_answer_packet(header, &question, answer);
-  query(answer, len, answer);
+  query(packet, sizeof(packet), answer);
 
   // std::basic_string<unsigned char> response =
   //     query((const char *)packet, sizeof(packet));
@@ -323,16 +328,18 @@ int DNS::query(const unsigned char *send_buffer, int size,
   // function queries to public dns server and returns response.
 
   // dns packet
-  int msg_len = 0;
+  int msg_len = -1;
   sendto(public_dns_sockfd, send_buffer, size, 0,
          (const struct sockaddr *)&public_dns_address,
          sizeof(public_dns_address));
 
   int addr_size = sizeof(public_dns_address);
 
-  msg_len =
-      recvfrom(public_dns_sockfd, recv_buffer, BUFFER_SIZE, 0,
-               (struct sockaddr *)&public_dns_address, (socklen_t *)&addr_size);
-
+  poll(&public_dns_poll, 1, TIMEOUT);
+  if (public_dns_poll.revents & POLLIN) {
+    msg_len = recvfrom(public_dns_sockfd, recv_buffer, BUFFER_SIZE, 0,
+                       (struct sockaddr *)&public_dns_address,
+                       (socklen_t *)&addr_size);
+  }
   return msg_len;
 }

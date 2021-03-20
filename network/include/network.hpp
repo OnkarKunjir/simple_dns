@@ -3,11 +3,13 @@
 #include <arpa/inet.h>
 #include <functional>
 #include <netinet/in.h>
+#include <poll.h>
 #include <string>
 
 #define DEFAULT_PUBLIC_DNS "8.8.8.8" // dns to fetch actual results from.
-#define DEFAULT_PUBLIC_DNS_PORT 5353 // port number for public dns
+#define DEFAULT_PUBLIC_DNS_PORT 8081 // port number for public dns
 #define BUFFER_SIZE 1024             // buffer size in bytes.
+#define TIMEOUT 500
 
 struct dns_header {
   unsigned short int id;      // Identification number
@@ -55,6 +57,7 @@ private:
   sockaddr_in local_dns_out_address; // address to query to public dns
   sockaddr_in public_dns_address;    // address of public dns
 
+  struct pollfd public_dns_poll;
   int create_socket(int &sockfd, const struct sockaddr_in *address);
   int query(const unsigned char *send_buffer, int size,
             char unsigned *recv_buffer);
